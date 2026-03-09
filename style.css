@@ -1,0 +1,18 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #004d7a; /* 深海の色 */
+    touch-action: none; /* iPadのジェスチャーを無効化 */
+}
+#score {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    z-index: 10;
+}
+canvas {
+    display: block;
+}
