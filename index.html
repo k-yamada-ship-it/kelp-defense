@@ -1,14 +1,600 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <link rel="stylesheet" href="style.css">
-    <title>コンブ守り隊！ウニを食え</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ラッコのウニハンター</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: rgba(17, 24, 39, 0.92);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top, #0b3b5a, var(--bg));
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+    }
+    .wrap { width: min(980px, 100%); }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+    .controls, .status {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 12px;
+      margin-top: 10px;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #startBtn {
+      background: #22c55e;
+      color: #052e16;
+    }
+    #resetBtn {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: linear-gradient(#bfe8ff 0%, #5cc2e6 35%, #0f5f78 100%);
+      border-radius: 18px;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.28);
+    }
+    .status {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .card {
+      background: rgba(255,255,255,0.04);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .value {
+      font-size: 24px;
+      font-weight: 800;
+      margin-top: 4px;
+    }
+    @media (max-width: 700px) {
+      .status { grid-template-columns: repeat(2, 1fr); }
+      h1 { font-size: 22px; }
+      .controls { padding: 10px; }
+      button { padding: 12px 14px; }
+      .value { font-size: 20px; }
+    }
+  </style>
 </head>
 <body>
-    <div id="score">食べたウニ: 0</div>
-    <canvas id="gameCanvas"></canvas>
-    <script src="game.js"></script>
+  <div class="wrap">
+    <h1>ラッコのウニハンター</h1>
+    <canvas id="game" width="900" height="560"></canvas>
+
+    <div class="controls">
+      <button id="startBtn" type="button">スタート</button>
+      <button id="resetBtn" type="button">リセット</button>
+      <div class="hint">iPhone / iPad / PC対応：指やマウスでラッコ移動。ウニに当たると食べる。</div>
+    </div>
+
+    <div class="status">
+      <div class="card"><div class="label">食べたウニ</div><div class="value" id="scoreView">0</div></div>
+      <div class="card"><div class="label">レベル</div><div class="value" id="levelView">1</div></div>
+      <div class="card"><div class="label">ケルプHP</div><div class="value" id="kelpView">100</div></div>
+      <div class="card"><div class="label">巨大化</div><div class="value" id="giantView">-</div></div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const scoreView = document.getElementById('scoreView');
+    const levelView = document.getElementById('levelView');
+    const kelpView = document.getElementById('kelpView');
+    const giantView = document.getElementById('giantView');
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const MAX_HP = 100;
+    const KELP_X = 110;
+    const FLOOR_Y = H - 90;
+
+    const state = {
+      running: false,
+      gameOver: false,
+      otter: { x: 450, y: 470 },
+      urchins: [],
+      fish: [
+        { x: 590, y: 150, s: 1.0 },
+        { x: 635, y: 182, s: 0.85 },
+        { x: 705, y: 145, s: 1.1 },
+        { x: 770, y: 210, s: 0.9 },
+        { x: 680, y: 235, s: 0.8 },
+        { x: 820, y: 170, s: 0.95 }
+      ],
+      crabs: [520, 760],
+      kelpHp: 100,
+      eaten: 0,
+      elapsed: 0,
+      spawnTimer: 0,
+      giantTimer: 0,
+      shockwaveTimer: 0,
+      swarmLevelTriggered: new Set(),
+      lastTime: 0,
+      nextId: 1
+    };
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function rand(a, b) {
+      return Math.random() * (b - a) + a;
+    }
+
+    function distance(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function level() {
+      return Math.floor(state.elapsed / 10) + 1;
+    }
+
+    function pickUrchinType() {
+      const r = Math.random();
+      if (r < 0.012) return 'white';
+      if (r < 0.032) return 'gold';
+      if (r < 0.16) return 'fast';
+      if (r < 0.27) return 'shooter';
+      if (r < 0.37) return 'giant';
+      return 'normal';
+    }
+
+    function createUrchin(type, x) {
+      const actualType = type || pickUrchinType();
+      const base = 75 + state.elapsed * 1.8;
+      const extra = actualType === 'fast' ? 90 : actualType === 'giant' ? -10 : 0;
+      return {
+        id: state.nextId++,
+        type: actualType,
+        x: x ?? W + 40,
+        y: rand(120, FLOOR_Y - 14),
+        vx: -(base + extra),
+        r: actualType === 'giant' ? 25 : (actualType === 'gold' || actualType === 'white') ? 18 : 16
+      };
+    }
+
+    function reset(start = false) {
+      state.running = start;
+      state.gameOver = false;
+      state.otter.x = 450;
+      state.otter.y = 470;
+      state.urchins = [];
+      state.kelpHp = 100;
+      state.eaten = 0;
+      state.elapsed = 0;
+      state.spawnTimer = 0;
+      state.giantTimer = 0;
+      state.shockwaveTimer = 0;
+      state.swarmLevelTriggered = new Set();
+      state.lastTime = 0;
+      state.nextId = 1;
+      startBtn.textContent = 'スタート';
+      syncHud();
+    }
+
+    function triggerWhiteShockwave() {
+      state.shockwaveTimer = 0.35;
+      const removed = state.urchins.length;
+      state.eaten += removed;
+      state.urchins = [];
+    }
+
+    function update(dt) {
+      if (!state.running || state.gameOver) return;
+
+      state.elapsed += dt;
+      state.spawnTimer += dt;
+      state.giantTimer = Math.max(0, state.giantTimer - dt);
+      state.shockwaveTimer = Math.max(0, state.shockwaveTimer - dt);
+      state.kelpHp = Math.min(MAX_HP, state.kelpHp + dt * 1.5);
+
+      state.crabs = state.crabs.map((x, i) => {
+        const dir = i % 2 === 0 ? 1 : -1;
+        let nx = x + dir * 16 * dt;
+        if (nx < 40) nx = W - 40;
+        if (nx > W - 40) nx = 40;
+        return nx;
+      });
+
+      const lv = level();
+      if (lv % 10 === 0 && !state.swarmLevelTriggered.has(lv)) {
+        state.swarmLevelTriggered.add(lv);
+        for (let i = 0; i < 12; i++) {
+          state.urchins.push(createUrchin('fast', W + 40 + i * 38));
+        }
+      }
+
+      const spawnInterval = Math.max(0.2, 1.0 - state.elapsed * 0.012);
+      if (state.spawnTimer >= spawnInterval) {
+        state.spawnTimer = 0;
+        state.urchins.push(createUrchin());
+      }
+
+      const eatRadius = state.giantTimer > 0 ? 68 : 42;
+      const next = [];
+      let eatenNow = 0;
+      let clearAll = false;
+
+      for (const u of state.urchins) {
+        const nx = u.x + u.vx * dt;
+        const hit = distance({ x: nx, y: u.y }, state.otter) < eatRadius;
+
+        if (hit) {
+          eatenNow += 1;
+          if (u.type === 'gold') state.giantTimer = 5;
+          if (u.type === 'white') clearAll = true;
+          continue;
+        }
+
+        if (nx < KELP_X + 118) {
+          state.kelpHp = Math.max(0, state.kelpHp - (u.type === 'giant' ? 12 : 6));
+          continue;
+        }
+
+        u.x = nx;
+        next.push(u);
+      }
+
+      if (clearAll) {
+        state.eaten += eatenNow;
+        state.urchins = next;
+        triggerWhiteShockwave();
+      } else {
+        state.urchins = next;
+        if (eatenNow > 0) state.eaten += eatenNow;
+      }
+
+      if (state.kelpHp <= 0) {
+        state.kelpHp = 0;
+        state.running = false;
+        state.gameOver = true;
+        startBtn.textContent = 'もう一回';
+      }
+
+      syncHud();
+    }
+
+    function drawSea() {
+      ctx.clearRect(0, 0, W, H);
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#d9f3ff');
+      g.addColorStop(0.38, '#68c9e8');
+      g.addColorStop(1, '#0f5f78');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#b58d54';
+      ctx.fillRect(0, FLOOR_Y, W, 90);
+    }
+
+    function drawKelp() {
+      if (state.gameOver) return;
+      const density = Math.max(10, Math.floor(state.kelpHp / 4));
+      ctx.fillStyle = '#6b4f2b';
+      ctx.beginPath();
+      ctx.ellipse(KELP_X + 92, FLOOR_Y - 6, 36, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#1f9d55';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 9;
+      for (let i = 0; i < density; i++) {
+        const base = KELP_X + 20 + i * 8;
+        const top = H - 260 - (i % 5) * 25;
+        ctx.beginPath();
+        ctx.moveTo(base, FLOOR_Y - 5);
+        ctx.bezierCurveTo(base - 30, H - 200, base + 30, top + 40, base, top);
+        ctx.stroke();
+      }
+    }
+
+    function drawFish() {
+      if (state.gameOver) return;
+      for (const f of state.fish) {
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        ctx.scale(f.s, f.s);
+        ctx.fillStyle = '#ffd166';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 14, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.moveTo(14, 0);
+        ctx.lineTo(24, -6);
+        ctx.lineTo(24, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    function drawCrabs() {
+      if (state.gameOver) return;
+      for (const x of state.crabs) {
+        ctx.save();
+        ctx.translate(x, H - 40);
+        ctx.fillStyle = '#cf5f2f';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 18, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(-6, -10, 3, 0, Math.PI * 2);
+        ctx.arc(6, -10, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    function drawOtter() {
+      const giant = state.giantTimer > 0;
+      const scale = giant ? 1.6 : 1;
+      ctx.save();
+      ctx.translate(state.otter.x, state.otter.y);
+      ctx.scale(scale, scale);
+
+      ctx.fillStyle = giant ? '#facc15' : '#6e4b2d';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 40, 23, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = giant ? '#fde68a' : '#8b5e34';
+      ctx.beginPath();
+      ctx.ellipse(8, 4, 18, 11, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = giant ? '#facc15' : '#6e4b2d';
+      ctx.beginPath();
+      ctx.arc(-34, -6, 16, 0, Math.PI * 2);
+      ctx.arc(-43, -17, 6, 0, Math.PI * 2);
+      ctx.arc(-26, -17, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#5b3c24';
+      ctx.beginPath();
+      ctx.ellipse(35, 1, 16, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (!state.gameOver) {
+        ctx.fillStyle = '#111';
+        ctx.beginPath();
+        ctx.arc(-38, -8, 2, 0, Math.PI * 2);
+        ctx.arc(-31, -8, 2, 0, Math.PI * 2);
+        ctx.arc(-34.5, -3, 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-41, -10); ctx.lineTo(-35, -6);
+        ctx.moveTo(-35, -10); ctx.lineTo(-41, -6);
+        ctx.moveTo(-34, -10); ctx.lineTo(-28, -6);
+        ctx.moveTo(-28, -10); ctx.lineTo(-34, -6);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawUrchin(u) {
+      let color = '#4b1c5b';
+      if (u.type === 'fast') color = '#ef4444';
+      if (u.type === 'shooter') color = '#2563eb';
+      if (u.type === 'giant') color = '#7c2d12';
+      if (u.type === 'gold') color = '#facc15';
+      if (u.type === 'white') color = '#f1f5f9';
+
+      ctx.save();
+      ctx.translate(u.x, u.y);
+      ctx.strokeStyle = '#301934';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 12; i++) {
+        const a = (Math.PI * 2 * i) / 12;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * (u.r + 10), Math.sin(a) * (u.r + 10));
+        ctx.stroke();
+      }
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(0, 0, u.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = u.type === 'white' ? '#111827' : '#fff';
+      ctx.font = '12px sans-serif';
+      if (u.type === 'gold') ctx.fillText('★', -6, 5);
+      if (u.type === 'white') ctx.fillText('✦', -6, 5);
+      ctx.restore();
+    }
+
+    function drawShockwave() {
+      if (state.shockwaveTimer <= 0) return;
+      const p = 1 - state.shockwaveTimer / 0.35;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,255,255,${0.5 - p * 0.4})`;
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(state.otter.x, state.otter.y, 40 + p * 260, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function roundRect(x, y, w, h, r, fillStyle) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      if (fillStyle) {
+        ctx.fillStyle = fillStyle;
+        ctx.fill();
+      }
+    }
+
+    function drawHud() {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(18, 16, 180, 60);
+      ctx.fillRect(220, 16, 120, 60);
+      ctx.fillStyle = '#fff';
+      ctx.font = '16px sans-serif';
+      ctx.fillText('食べたウニ', 30, 38);
+      ctx.fillText('レベル', 236, 38);
+      ctx.font = 'bold 28px sans-serif';
+      ctx.fillText(String(state.eaten) + ' 匹', 30, 64);
+      ctx.fillText(String(level()), 236, 64);
+
+      const barX = 370;
+      const barY = 18;
+      const barW = 220;
+      const barH = 22;
+      roundRect(barX - 10, barY - 10, barW + 20, barH + 30, 8, 'rgba(0,0,0,0.6)');
+      ctx.fillStyle = '#fff';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('ケルプ', barX, barY - 2);
+      ctx.fillStyle = '#1f2937';
+      ctx.fillRect(barX, barY, barW, barH);
+      const hpRatio = state.kelpHp / MAX_HP;
+      ctx.fillStyle = hpRatio > 0.5 ? '#22c55e' : hpRatio > 0.25 ? '#f59e0b' : '#ef4444';
+      ctx.fillRect(barX, barY, barW * hpRatio, barH);
+      ctx.strokeStyle = '#000';
+      ctx.strokeRect(barX, barY, barW, barH);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(Math.floor(state.kelpHp) + ' / ' + MAX_HP, barX + barW / 2 - 28, barY + 16);
+
+      if (state.giantTimer > 0) {
+        ctx.fillStyle = '#fde68a';
+        ctx.font = '20px sans-serif';
+        ctx.fillText('GIANT ' + state.giantTimer.toFixed(1), 620, 40);
+      }
+    }
+
+    function drawGameOver() {
+      if (!state.gameOver) return;
+      roundRect(240, 150, 420, 220, 24, 'rgba(0,0,0,0.78)');
+      ctx.fillStyle = '#fff';
+      ctx.font = '34px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('ゲームオーバー', 450, 220);
+      ctx.font = '22px sans-serif';
+      ctx.fillText('食べたウニ ' + state.eaten + ' 匹', 450, 268);
+      ctx.font = '20px sans-serif';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText('到達レベル ' + level(), 450, 304);
+      ctx.textAlign = 'start';
+    }
+
+    function draw() {
+      drawSea();
+      drawFish();
+      drawKelp();
+      drawCrabs();
+      state.urchins.forEach(drawUrchin);
+      drawOtter();
+      drawShockwave();
+      drawHud();
+      drawGameOver();
+    }
+
+    function syncHud() {
+      scoreView.textContent = state.eaten;
+      levelView.textContent = level();
+      kelpView.textContent = Math.floor(state.kelpHp);
+      giantView.textContent = state.giantTimer > 0 ? state.giantTimer.toFixed(1) + 's' : '-';
+    }
+
+    function loop(t) {
+      const dt = state.lastTime ? Math.min(32, t - state.lastTime) / 1000 : 0;
+      state.lastTime = t;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function moveOtter(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * W;
+      const y = ((clientY - rect.top) / rect.height) * H;
+      state.otter.x = clamp(x, 60, W - 60);
+      state.otter.y = clamp(y, 110, H - 92);
+    }
+
+    function handlePointer(e) {
+      e.preventDefault();
+      moveOtter(e.clientX, e.clientY);
+    }
+
+    canvas.addEventListener('pointermove', handlePointer, { passive: false });
+    canvas.addEventListener('pointerdown', handlePointer, { passive: false });
+    canvas.addEventListener('pointerenter', handlePointer, { passive: false });
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      if (t) moveOtter(t.clientX, t.clientY);
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      if (t) moveOtter(t.clientX, t.clientY);
+    }, { passive: false });
+
+    startBtn.addEventListener('click', () => {
+      if (state.gameOver) {
+        reset(true);
+        startBtn.textContent = '一時停止';
+        return;
+      }
+      state.running = !state.running;
+      startBtn.textContent = state.running ? '一時停止' : 'スタート';
+    });
+
+    resetBtn.addEventListener('click', () => reset(false));
+
+    reset(false);
+    requestAnimationFrame(loop);
+  </script>
 </body>
 </html>
